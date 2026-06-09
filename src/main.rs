@@ -11,12 +11,23 @@ use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbErr, Schema};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::models::users;
+use crate::models::{articles, follows, users};
 
 async fn setup(db: &DatabaseConnection) {
     let schema = Schema::new(sea_orm::DbBackend::Sqlite);
-    let stmt = schema.create_table_from_entity(users::Entity);
-    db.execute(db.get_database_backend().build(&stmt))
+
+    let users_stmt = schema.create_table_from_entity(users::Entity);
+    db.execute(db.get_database_backend().build(&users_stmt))
+        .await
+        .ok();
+
+    let articles_stmt = schema.create_table_from_entity(articles::Entity);
+    db.execute(db.get_database_backend().build(&articles_stmt))
+        .await
+        .ok();
+
+    let follows_stmt = schema.create_table_from_entity(follows::Entity);
+    db.execute(db.get_database_backend().build(&follows_stmt))
         .await
         .ok();
 }
