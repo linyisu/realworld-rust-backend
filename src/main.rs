@@ -11,7 +11,7 @@ use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbErr, Schema};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::models::{articles, favorites, follows, users};
+use crate::models::{article_tags, articles, favorites, follows, tags, users};
 
 async fn log_request(
     req: axum::extract::Request,
@@ -41,6 +41,16 @@ async fn setup(db: &DatabaseConnection) {
 
     let favorites_stmt = schema.create_table_from_entity(favorites::Entity);
     db.execute(db.get_database_backend().build(&favorites_stmt))
+        .await
+        .ok();
+
+    let tags_stmt = schema.create_table_from_entity(tags::Entity);
+    db.execute(db.get_database_backend().build(&tags_stmt))
+        .await
+        .ok();
+
+    let article_tags_stmt = schema.create_table_from_entity(article_tags::Entity);
+    db.execute(db.get_database_backend().build(&article_tags_stmt))
         .await
         .ok();
 }

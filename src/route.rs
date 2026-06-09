@@ -3,6 +3,7 @@ use crate::handlers::{
     auth::{get_user, login, signup, update_user},
     favorite::{favorite, unfavorite},
     profile::{follow, get_profile, unfollow},
+    tag::get_tags,
 };
 
 use axum::{
@@ -27,4 +28,5 @@ pub fn routes() -> Router<DatabaseConnection> {
         .route("/api/articles/{slug}", delete(delete_article))
         .route("/api/articles/{slug}/favorite", post(favorite))
         .route("/api/articles/{slug}/favorite", delete(unfavorite))
+        .route("/api/tags", get(get_tags))
 }

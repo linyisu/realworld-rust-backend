@@ -8,7 +8,7 @@ use crate::{
         profile::ProfileResponse,
     },
     middleware::auth::{AuthUser, OptionalAuth},
-    models::{articles, favorites, users},
+    models::{article_tags, articles, favorites, tags, users},
     utils::{
         article::{decode_slug, slugify},
         follow::is_following,
@@ -48,6 +48,38 @@ pub async fn create_article(
         .await?
         .ok_or(AppError::NotFound)?;
 
+    let mut saved_tags = Vec::new();
+    if let Some(tag_list) = payload.article.tag_list {
+        for tag_name in tag_list {
+            let tag = match tags::Entity::find()
+                .filter(tags::Column::Name.eq(&tag_name))
+                .one(&db)
+                .await?
+            {
+                Some(t) => t,
+                None => {
+                    let new_tag = tags::ActiveModel {
+                        name: Set(tag_name.clone()),
+                        ..Default::default()
+                    };
+                    let tag_res = tags::Entity::insert(new_tag).exec(&db).await?;
+                    tags::Entity::find_by_id(tag_res.last_insert_id)
+                        .one(&db)
+                        .await?
+                        .ok_or(AppError::NotFound)?
+                }
+            };
+
+            let article_tag = article_tags::ActiveModel {
+                article_id: Set(article.id),
+                tag_id: Set(tag.id),
+            };
+            article_tags::Entity::insert(article_tag).exec(&db).await?;
+
+            saved_tags.push(tag_name);
+        }
+    }
+
     let author = users::Entity::find_by_id(auth_user.user_id)
         .one(&db)
         .await?
@@ -61,7 +93,7 @@ pub async fn create_article(
             title: article.title,
             description: article.description,
             body: article.body,
-            tag_list: payload.article.tag_list.unwrap_or_default(),
+            tag_list: saved_tags,
             created_at: article.created_at,
             updated_at: article.updated_at,
             favorited: false,
@@ -113,6 +145,40 @@ pub async fn update_article(
 
     let updated_article = active_article.update(&db).await?;
 
+    if let Some(tag_list) = payload.article.tag_list {
+        article_tags::Entity::delete_many()
+            .filter(article_tags::Column::ArticleId.eq(updated_article.id))
+            .exec(&db)
+            .await?;
+
+        for tag_name in tag_list {
+            let tag = match tags::Entity::find()
+                .filter(tags::Column::Name.eq(&tag_name))
+                .one(&db)
+                .await?
+            {
+                Some(t) => t,
+                None => {
+                    let new_tag = tags::ActiveModel {
+                        name: Set(tag_name.clone()),
+                        ..Default::default()
+                    };
+                    let tag_res = tags::Entity::insert(new_tag).exec(&db).await?;
+                    tags::Entity::find_by_id(tag_res.last_insert_id)
+                        .one(&db)
+                        .await?
+                        .ok_or(AppError::NotFound)?
+                }
+            };
+
+            let article_tag = article_tags::ActiveModel {
+                article_id: Set(updated_article.id),
+                tag_id: Set(tag.id),
+            };
+            article_tags::Entity::insert(article_tag).exec(&db).await?;
+        }
+    }
+
     let author = users::Entity::find_by_id(updated_article.author_id)
         .one(&db)
         .await?
@@ -130,14 +196,15 @@ pub async fn update_article(
         .count(&db)
         .await? as u32;
 
+    let tag_list = get_article_tags(&db, updated_article.id).await?;
+
     Ok(Json(UpdateResponse {
         article: ArticleResponse {
             slug: updated_article.slug,
             title: updated_article.title,
             description: updated_article.description,
             body: updated_article.body,
-            // NOTE tag_list
-            tag_list: vec![],
+            tag_list,
             created_at: updated_article.created_at,
             updated_at: updated_article.updated_at,
             favorited,
@@ -206,7 +273,36 @@ pub async fn list_articles(
         }
     }
 
-    // NOTE: select tag
+    if let Some(tag_name) = params.tag {
+        let tag = tags::Entity::find()
+            .filter(tags::Column::Name.eq(&tag_name))
+            .one(&db)
+            .await?;
+
+        if let Some(t) = tag {
+            let article_ids: Vec<u32> = article_tags::Entity::find()
+                .filter(article_tags::Column::TagId.eq(t.id))
+                .all(&db)
+                .await?
+                .into_iter()
+                .map(|at| at.article_id)
+                .collect();
+
+            if article_ids.is_empty() {
+                return Ok(Json(ListResponse {
+                    articles: vec![],
+                    articles_count: 0,
+                }));
+            }
+
+            query = query.filter(articles::Column::Id.is_in(article_ids));
+        } else {
+            return Ok(Json(ListResponse {
+                articles: vec![],
+                articles_count: 0,
+            }));
+        }
+    }
 
     let limit = params.limit.unwrap_or(20);
     let offset = params.offset.unwrap_or(0);
@@ -245,12 +341,14 @@ pub async fn list_articles(
             .count(&db)
             .await? as u32;
 
+        let tag_list = get_article_tags(&db, article.id).await?;
+
         articles_response.push(ArticleResponse {
             slug: article.slug,
             title: article.title,
             description: article.description,
             body: article.body,
-            tag_list: vec![],
+            tag_list,
             created_at: article.created_at,
             updated_at: article.updated_at,
             favorited,
@@ -310,13 +408,15 @@ pub async fn get_article(
         .count(&db)
         .await? as u32;
 
+    let tag_list = get_article_tags(&db, article.id).await?;
+
     Ok(Json(GetResponse {
         article: ArticleResponse {
             slug: article.slug,
             title: article.title,
             description: article.description,
             body: article.body,
-            tag_list: vec![],
+            tag_list,
             created_at: article.created_at,
             updated_at: article.updated_at,
             favorited,
@@ -351,4 +451,23 @@ pub async fn delete_article(
     articles::Entity::delete_by_id(article.id).exec(&db).await?;
 
     Ok(Json(()))
+}
+
+async fn get_article_tags(
+    db: &DatabaseConnection,
+    article_id: u32,
+) -> Result<Vec<String>, AppError> {
+    let article_tag_records = article_tags::Entity::find()
+        .filter(article_tags::Column::ArticleId.eq(article_id))
+        .all(db)
+        .await?;
+
+    let mut tag_names = Vec::new();
+    for article_tag in article_tag_records {
+        if let Some(tag) = tags::Entity::find_by_id(article_tag.tag_id).one(db).await? {
+            tag_names.push(tag.name);
+        }
+    }
+
+    Ok(tag_names)
 }

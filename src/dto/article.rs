@@ -5,6 +5,7 @@ pub struct CreateArticle {
     pub title: String,
     pub description: String,
     pub body: String,
+    #[serde(rename = "tagList")]
     pub tag_list: Option<Vec<String>>,
 }
 
@@ -18,6 +19,7 @@ pub struct UpdateArticle {
     pub title: Option<String>,
     pub description: Option<String>,
     pub body: Option<String>,
+    #[serde(rename = "tagList")]
     pub tag_list: Option<Vec<String>>,
 }
 
@@ -41,6 +43,7 @@ pub struct ArticleResponse {
     pub title: String,
     pub description: String,
     pub body: String,
+    #[serde(rename = "tagList")]
     pub tag_list: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
