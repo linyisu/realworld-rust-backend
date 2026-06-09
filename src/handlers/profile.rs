@@ -14,8 +14,6 @@ pub async fn get_profile(
     Path(username): Path<String>,
     OptionalAuth(auth_user): OptionalAuth,
 ) -> Result<axum::Json<GetResponse>, AppError> {
-    println!("get_profile: username={}, auth_user={:?}", username, auth_user.as_ref().map(|u| u.user_id));
-
     let user = users::Entity::find()
         .filter(users::Column::Username.eq(&username))
         .one(&db)
@@ -23,11 +21,8 @@ pub async fn get_profile(
         .ok_or(AppError::NotFound)?;
 
     let following = if let Some(auth) = auth_user {
-        let is_follow = is_following(&db, auth.user_id, user.id).await?;
-        println!("is_following: follower_id={}, followee_id={}, result={}", auth.user_id, user.id, is_follow);
-        is_follow
+        is_following(&db, auth.user_id, user.id).await?
     } else {
-        println!("No auth user, following=false");
         false
     };
 

@@ -1,7 +1,7 @@
 use crate::{app_error::AppError, models::users};
 
 use chrono::{Duration, Utc};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -37,8 +37,7 @@ pub fn generate_token(user: &users::Model) -> Result<String, AppError> {
 }
 
 pub fn verify_token(token: &str) -> Result<Claims, AppError> {
-    let secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| String::from("DEFAULT_SECRET_KEY"));
+    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| String::from("DEFAULT_SECRET_KEY"));
 
     let token_data = decode::<Claims>(
         token,
