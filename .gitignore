@@ -1,4 +1,4 @@
 /target
 .env
 database.db
-SPEC.md
+data_gen.sh

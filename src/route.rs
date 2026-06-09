@@ -1,6 +1,7 @@
 use crate::handlers::{
     article::{create_article, delete_article, get_article, list_articles, update_article},
     auth::{get_user, login, signup, update_user},
+    favorite::{favorite, unfavorite},
     profile::{follow, get_profile, unfollow},
 };
 
@@ -24,4 +25,6 @@ pub fn routes() -> Router<DatabaseConnection> {
         .route("/api/articles/{slug}", get(get_article))
         .route("/api/articles/{slug}", put(update_article))
         .route("/api/articles/{slug}", delete(delete_article))
+        .route("/api/articles/{slug}/favorite", post(favorite))
+        .route("/api/articles/{slug}/favorite", delete(unfavorite))
 }

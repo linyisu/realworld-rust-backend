@@ -26,6 +26,15 @@ pub struct UpdateRequest {
     pub article: UpdateArticle,
 }
 
+#[derive(Deserialize)]
+pub struct ListRequest {
+    pub tag: Option<String>,
+    pub author: Option<String>,
+    pub favorited: Option<String>,
+    pub limit: Option<u64>,
+    pub offset: Option<u64>,
+}
+
 #[derive(Serialize)]
 pub struct ArticleResponse {
     pub slug: String,

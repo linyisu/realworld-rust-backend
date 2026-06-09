@@ -38,8 +38,8 @@ pub async fn get_profile(
 
 pub async fn follow(
     State(db): State<DatabaseConnection>,
-    auth_user: AuthUser,
     Path(username): Path<String>,
+    auth_user: AuthUser,
 ) -> Result<axum::Json<FollowResponse>, AppError> {
     let user = users::Entity::find()
         .filter(users::Column::Username.eq(&username))
@@ -69,8 +69,8 @@ pub async fn follow(
 
 pub async fn unfollow(
     State(db): State<DatabaseConnection>,
-    auth_user: AuthUser,
     Path(username): Path<String>,
+    auth_user: AuthUser,
 ) -> Result<axum::Json<UnfollowResponse>, AppError> {
     let user = users::Entity::find()
         .filter(users::Column::Username.eq(&username))

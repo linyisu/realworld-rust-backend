@@ -2,32 +2,24 @@ use crate::{
     app_error::AppError,
     dto::{
         article::{
-            ArticleResponse, CreateRequest, CreateResponse, GetResponse, ListResponse,
+            ArticleResponse, CreateRequest, CreateResponse, GetResponse, ListRequest, ListResponse,
             UpdateRequest, UpdateResponse,
         },
         profile::ProfileResponse,
     },
     middleware::auth::{AuthUser, OptionalAuth},
-    models::{articles, users},
-    utils::{article::slugify, follow::is_following},
+    models::{articles, favorites, users},
+    utils::{
+        article::{decode_slug, slugify},
+        follow::is_following,
+    },
 };
 
 use axum::extract::{Json, Path, Query, State};
-use percent_encoding::percent_decode_str;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QuerySelect,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait,
+    PaginatorTrait, QueryFilter, QuerySelect,
 };
-use serde::Deserialize;
-
-#[derive(Deserialize)]
-pub struct ListQuery {
-    pub tag: Option<String>,
-    pub author: Option<String>,
-    pub favorited: Option<String>,
-    pub limit: Option<u64>,
-    pub offset: Option<u64>,
-}
 
 pub async fn create_article(
     State(db): State<DatabaseConnection>,
@@ -126,6 +118,18 @@ pub async fn update_article(
         .await?
         .ok_or(AppError::NotFound)?;
 
+    let favorited = favorites::Entity::find()
+        .filter(favorites::Column::UserId.eq(auth_user.user_id))
+        .filter(favorites::Column::ArticleId.eq(updated_article.id))
+        .one(&db)
+        .await?
+        .is_some();
+
+    let favorites_count = favorites::Entity::find()
+        .filter(favorites::Column::ArticleId.eq(updated_article.id))
+        .count(&db)
+        .await? as u32;
+
     Ok(Json(UpdateResponse {
         article: ArticleResponse {
             slug: updated_article.slug,
@@ -136,8 +140,8 @@ pub async fn update_article(
             tag_list: vec![],
             created_at: updated_article.created_at,
             updated_at: updated_article.updated_at,
-            favorited: false,
-            favorites_count: 0,
+            favorited,
+            favorites_count,
             author: ProfileResponse {
                 username: author.username,
                 bio: author.bio,
@@ -150,7 +154,7 @@ pub async fn update_article(
 
 pub async fn list_articles(
     State(db): State<DatabaseConnection>,
-    Query(params): Query<ListQuery>,
+    Query(params): Query<ListRequest>,
     OptionalAuth(auth_user): OptionalAuth,
 ) -> Result<Json<ListResponse>, AppError> {
     let mut query = articles::Entity::find();
@@ -171,7 +175,38 @@ pub async fn list_articles(
         }
     }
 
-    // NOTE: select tag & favorited
+    if let Some(favorited_by) = params.favorited {
+        let favorited_user = users::Entity::find()
+            .filter(users::Column::Username.eq(&favorited_by))
+            .one(&db)
+            .await?;
+
+        if let Some(user) = favorited_user {
+            let favorited_article_ids: Vec<u32> = favorites::Entity::find()
+                .filter(favorites::Column::UserId.eq(user.id))
+                .all(&db)
+                .await?
+                .into_iter()
+                .map(|f| f.article_id)
+                .collect();
+
+            if favorited_article_ids.is_empty() {
+                return Ok(Json(ListResponse {
+                    articles: vec![],
+                    articles_count: 0,
+                }));
+            }
+
+            query = query.filter(articles::Column::Id.is_in(favorited_article_ids));
+        } else {
+            return Ok(Json(ListResponse {
+                articles: vec![],
+                articles_count: 0,
+            }));
+        }
+    }
+
+    // NOTE: select tag
 
     let limit = params.limit.unwrap_or(20);
     let offset = params.offset.unwrap_or(0);
@@ -194,6 +229,22 @@ pub async fn list_articles(
             false
         };
 
+        let favorited = if let Some(auth) = auth_user.as_ref() {
+            favorites::Entity::find()
+                .filter(favorites::Column::UserId.eq(auth.user_id))
+                .filter(favorites::Column::ArticleId.eq(article.id))
+                .one(&db)
+                .await?
+                .is_some()
+        } else {
+            false
+        };
+
+        let favorites_count = favorites::Entity::find()
+            .filter(favorites::Column::ArticleId.eq(article.id))
+            .count(&db)
+            .await? as u32;
+
         articles_response.push(ArticleResponse {
             slug: article.slug,
             title: article.title,
@@ -202,8 +253,8 @@ pub async fn list_articles(
             tag_list: vec![],
             created_at: article.created_at,
             updated_at: article.updated_at,
-            favorited: false,
-            favorites_count: 0,
+            favorited,
+            favorites_count,
             author: ProfileResponse {
                 username: author.username,
                 bio: author.bio,
@@ -243,6 +294,22 @@ pub async fn get_article(
         false
     };
 
+    let favorited = if let Some(auth) = auth_user.as_ref() {
+        favorites::Entity::find()
+            .filter(favorites::Column::UserId.eq(auth.user_id))
+            .filter(favorites::Column::ArticleId.eq(article.id))
+            .one(&db)
+            .await?
+            .is_some()
+    } else {
+        false
+    };
+
+    let favorites_count = favorites::Entity::find()
+        .filter(favorites::Column::ArticleId.eq(article.id))
+        .count(&db)
+        .await? as u32;
+
     Ok(Json(GetResponse {
         article: ArticleResponse {
             slug: article.slug,
@@ -252,8 +319,8 @@ pub async fn get_article(
             tag_list: vec![],
             created_at: article.created_at,
             updated_at: article.updated_at,
-            favorited: false,
-            favorites_count: 0,
+            favorited,
+            favorites_count,
             author: ProfileResponse {
                 username: author.username,
                 bio: author.bio,
@@ -284,11 +351,4 @@ pub async fn delete_article(
     articles::Entity::delete_by_id(article.id).exec(&db).await?;
 
     Ok(Json(()))
-}
-
-fn decode_slug(slug: &str) -> Result<String, AppError> {
-    percent_decode_str(slug)
-        .decode_utf8()
-        .map(|s| s.to_string())
-        .map_err(|_| AppError::BadRequest)
 }
