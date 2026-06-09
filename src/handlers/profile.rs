@@ -18,7 +18,7 @@ pub async fn get_profile(
         .filter(users::Column::Username.eq(&username))
         .one(&db)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or(AppError::ProfileNotFound)?;
 
     let following = if let Some(auth) = auth_user {
         is_following(&db, auth.user_id, user.id).await?
@@ -45,9 +45,9 @@ pub async fn follow(
         .filter(users::Column::Username.eq(&username))
         .one(&db)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or(AppError::ProfileNotFound)?;
 
-    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
     let new_follow = follows::ActiveModel {
         follower_id: Set(auth_user.user_id),
@@ -76,7 +76,7 @@ pub async fn unfollow(
         .filter(users::Column::Username.eq(&username))
         .one(&db)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or(AppError::ProfileNotFound)?;
 
     follows::Entity::delete_many()
         .filter(follows::Column::FollowerId.eq(auth_user.user_id))

@@ -19,7 +19,7 @@ pub struct UpdateArticle {
     pub title: Option<String>,
     pub description: Option<String>,
     pub body: Option<String>,
-    #[serde(rename = "tagList")]
+    #[serde(rename = "tagList", default, skip_serializing_if = "Option::is_none")]
     pub tag_list: Option<Vec<String>>,
 }
 
@@ -45,9 +45,29 @@ pub struct ArticleResponse {
     pub body: String,
     #[serde(rename = "tagList")]
     pub tag_list: Vec<String>,
+    #[serde(rename = "createdAt")]
     pub created_at: String,
+    #[serde(rename = "updatedAt")]
     pub updated_at: String,
     pub favorited: bool,
+    #[serde(rename = "favoritesCount")]
+    pub favorites_count: u32,
+    pub author: super::profile::ProfileResponse,
+}
+
+#[derive(Serialize)]
+pub struct ArticleListItemResponse {
+    pub slug: String,
+    pub title: String,
+    pub description: String,
+    #[serde(rename = "tagList")]
+    pub tag_list: Vec<String>,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
+    pub favorited: bool,
+    #[serde(rename = "favoritesCount")]
     pub favorites_count: u32,
     pub author: super::profile::ProfileResponse,
 }
@@ -69,6 +89,7 @@ pub struct UpdateResponse {
 
 #[derive(Serialize)]
 pub struct ListResponse {
-    pub articles: Vec<ArticleResponse>,
+    pub articles: Vec<ArticleListItemResponse>,
+    #[serde(rename = "articlesCount")]
     pub articles_count: usize,
 }

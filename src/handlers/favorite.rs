@@ -5,10 +5,14 @@ use sea_orm::{
 
 use crate::{
     app_error::AppError,
-    dto::favorite::{ArticleResponse, FavoriteResponse, UnfavoriteResponse},
+    dto::{
+        article::ArticleResponse,
+        favorite::{FavoriteResponse, UnfavoriteResponse},
+        profile::ProfileResponse,
+    },
     middleware::auth::AuthUser,
-    models::{articles, favorites},
-    utils::article::decode_slug,
+    models::{article_tags, articles, favorites, tags, users},
+    utils::{article::decode_slug, follow::is_following},
 };
 
 pub async fn favorite(
@@ -22,18 +26,40 @@ pub async fn favorite(
         .filter(articles::Column::Slug.eq(decoded_slug))
         .one(&db)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or(AppError::ArticleNotFound)?;
 
-    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
     let new_favorite = favorites::ActiveModel {
         user_id: Set(auth_user.user_id),
         article_id: Set(article.id),
-        created_at: Set(now.to_string()),
+        created_at: Set(now),
     };
 
     favorites::Entity::insert(new_favorite).exec(&db).await?;
 
+    // 获取文章标签
+    let article_tag_records = article_tags::Entity::find()
+        .filter(article_tags::Column::ArticleId.eq(article.id))
+        .all(&db)
+        .await?;
+
+    let mut tag_list = Vec::new();
+    for at in article_tag_records {
+        if let Some(tag) = tags::Entity::find_by_id(at.tag_id).one(&db).await? {
+            tag_list.push(tag.name);
+        }
+    }
+
+    // 获取作者信息
+    let author = users::Entity::find_by_id(article.author_id)
+        .one(&db)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let following = is_following(&db, auth_user.user_id, author.id).await?;
+
+    // 获取收藏数
     let favorites_count = favorites::Entity::find()
         .filter(favorites::Column::ArticleId.eq(article.id))
         .count(&db)
@@ -41,8 +67,21 @@ pub async fn favorite(
 
     Ok(axum::Json(FavoriteResponse {
         article: ArticleResponse {
+            slug: article.slug,
+            title: article.title,
+            description: article.description,
+            body: article.body,
+            tag_list,
+            created_at: article.created_at,
+            updated_at: article.updated_at,
             favorited: true,
             favorites_count,
+            author: ProfileResponse {
+                username: author.username,
+                bio: author.bio,
+                image: author.image,
+                following,
+            },
         },
     }))
 }
@@ -58,7 +97,7 @@ pub async fn unfavorite(
         .filter(articles::Column::Slug.eq(decoded_slug))
         .one(&db)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or(AppError::ArticleNotFound)?;
 
     favorites::Entity::delete_many()
         .filter(favorites::Column::UserId.eq(auth_user.user_id))
@@ -66,6 +105,28 @@ pub async fn unfavorite(
         .exec(&db)
         .await?;
 
+    // 获取文章标签
+    let article_tag_records = article_tags::Entity::find()
+        .filter(article_tags::Column::ArticleId.eq(article.id))
+        .all(&db)
+        .await?;
+
+    let mut tag_list = Vec::new();
+    for at in article_tag_records {
+        if let Some(tag) = tags::Entity::find_by_id(at.tag_id).one(&db).await? {
+            tag_list.push(tag.name);
+        }
+    }
+
+    // 获取作者信息
+    let author = users::Entity::find_by_id(article.author_id)
+        .one(&db)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let following = is_following(&db, auth_user.user_id, author.id).await?;
+
+    // 获取收藏数
     let favorites_count = favorites::Entity::find()
         .filter(favorites::Column::ArticleId.eq(article.id))
         .count(&db)
@@ -73,8 +134,21 @@ pub async fn unfavorite(
 
     Ok(axum::Json(UnfavoriteResponse {
         article: ArticleResponse {
+            slug: article.slug,
+            title: article.title,
+            description: article.description,
+            body: article.body,
+            tag_list,
+            created_at: article.created_at,
+            updated_at: article.updated_at,
             favorited: false,
             favorites_count,
+            author: ProfileResponse {
+                username: author.username,
+                bio: author.bio,
+                image: author.image,
+                following,
+            },
         },
     }))
 }

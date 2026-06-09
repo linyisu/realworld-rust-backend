@@ -2,8 +2,8 @@ use crate::{
     app_error::AppError,
     dto::{
         article::{
-            ArticleResponse, CreateRequest, CreateResponse, GetResponse, ListRequest, ListResponse,
-            UpdateRequest, UpdateResponse,
+            ArticleListItemResponse, ArticleResponse, CreateRequest, CreateResponse, GetResponse,
+            ListRequest, ListResponse, UpdateRequest, UpdateResponse,
         },
         profile::ProfileResponse,
     },
@@ -16,22 +16,57 @@ use crate::{
 };
 
 use axum::extract::{Json, Path, Query, State};
+use axum::http::StatusCode;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait,
-    PaginatorTrait, QueryFilter, QuerySelect,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
 
 pub async fn create_article(
     State(db): State<DatabaseConnection>,
     auth_user: AuthUser,
     Json(payload): Json<CreateRequest>,
-) -> Result<axum::Json<CreateResponse>, AppError> {
+) -> Result<(StatusCode, axum::Json<CreateResponse>), AppError> {
+    if payload.article.title.trim().is_empty() {
+        return Err(AppError::ValidationError(
+            "title".to_string(),
+            "can't be blank".to_string(),
+        ));
+    }
+
+    if payload.article.description.trim().is_empty() {
+        return Err(AppError::ValidationError(
+            "description".to_string(),
+            "can't be blank".to_string(),
+        ));
+    }
+
+    if payload.article.body.trim().is_empty() {
+        return Err(AppError::ValidationError(
+            "body".to_string(),
+            "can't be blank".to_string(),
+        ));
+    }
+
     let slug = slugify(&payload.article.title);
 
-    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let mut final_slug = slug.clone();
+    let mut counter = 1;
+
+    while articles::Entity::find()
+        .filter(articles::Column::Slug.eq(&final_slug))
+        .one(&db)
+        .await?
+        .is_some()
+    {
+        final_slug = format!("{}-{}", slug, counter);
+        counter += 1;
+    }
+
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
     let new_article = articles::ActiveModel {
-        slug: Set(slug.clone()),
+        slug: Set(final_slug.clone()),
         title: Set(payload.article.title.clone()),
         description: Set(payload.article.description.clone()),
         body: Set(payload.article.body.clone()),
@@ -87,43 +122,55 @@ pub async fn create_article(
 
     let following = is_following(&db, auth_user.user_id, author.id).await?;
 
-    Ok(axum::Json(CreateResponse {
-        article: ArticleResponse {
-            slug: article.slug,
-            title: article.title,
-            description: article.description,
-            body: article.body,
-            tag_list: saved_tags,
-            created_at: article.created_at,
-            updated_at: article.updated_at,
-            favorited: false,
-            favorites_count: 0,
-            author: ProfileResponse {
-                username: author.username,
-                bio: author.bio,
-                image: author.image,
-                following,
+    Ok((
+        StatusCode::CREATED,
+        axum::Json(CreateResponse {
+            article: ArticleResponse {
+                slug: article.slug,
+                title: article.title,
+                description: article.description,
+                body: article.body,
+                tag_list: saved_tags,
+                created_at: article.created_at,
+                updated_at: article.updated_at,
+                favorited: false,
+                favorites_count: 0,
+                author: ProfileResponse {
+                    username: author.username,
+                    bio: author.bio,
+                    image: author.image,
+                    following,
+                },
             },
-        },
-    }))
+        }),
+    ))
 }
 
 pub async fn update_article(
     State(db): State<DatabaseConnection>,
     auth_user: AuthUser,
     Path(slug): Path<String>,
-    Json(payload): Json<UpdateRequest>,
+    body: String,
 ) -> Result<axum::Json<UpdateResponse>, AppError> {
+    if body.contains("\"tagList\":null") || body.contains("\"tagList\": null") {
+        return Err(AppError::ValidationError(
+            "tagList".to_string(),
+            "cannot be null".to_string(),
+        ));
+    }
+
+    let payload: UpdateRequest = serde_json::from_str(&body).map_err(|_| AppError::BadRequest)?;
+
     let decoded_slug = decode_slug(&slug)?;
 
     let article = articles::Entity::find()
         .filter(articles::Column::Slug.eq(decoded_slug))
         .one(&db)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or(AppError::ArticleNotFound)?;
 
     if article.author_id != auth_user.user_id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::ArticleForbidden);
     }
 
     let mut active_article: articles::ActiveModel = article.into();
@@ -140,7 +187,7 @@ pub async fn update_article(
         active_article.body = Set(body);
     }
 
-    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     active_article.updated_at = Set(now.to_string());
 
     let updated_article = active_article.update(&db).await?;
@@ -307,9 +354,14 @@ pub async fn list_articles(
     let limit = params.limit.unwrap_or(20);
     let offset = params.offset.unwrap_or(0);
 
-    let articles_list = query.limit(limit).offset(offset).all(&db).await?;
+    let total_count = query.clone().count(&db).await? as usize;
 
-    let total_count = articles_list.len();
+    let articles_list = query
+        .order_by_desc(articles::Column::CreatedAt)
+        .limit(limit)
+        .offset(offset)
+        .all(&db)
+        .await?;
 
     let mut articles_response = Vec::new();
 
@@ -343,11 +395,92 @@ pub async fn list_articles(
 
         let tag_list = get_article_tags(&db, article.id).await?;
 
-        articles_response.push(ArticleResponse {
+        articles_response.push(ArticleListItemResponse {
             slug: article.slug,
             title: article.title,
             description: article.description,
-            body: article.body,
+            tag_list,
+            created_at: article.created_at,
+            updated_at: article.updated_at,
+            favorited,
+            favorites_count,
+            author: ProfileResponse {
+                username: author.username,
+                bio: author.bio,
+                image: author.image,
+                following,
+            },
+        });
+    }
+
+    Ok(Json(ListResponse {
+        articles: articles_response,
+        articles_count: total_count,
+    }))
+}
+
+pub async fn get_feed(
+    State(db): State<DatabaseConnection>,
+    auth_user: AuthUser,
+    Query(params): Query<ListRequest>,
+) -> Result<Json<ListResponse>, AppError> {
+    let following_ids: Vec<u32> = crate::models::follows::Entity::find()
+        .filter(crate::models::follows::Column::FollowerId.eq(auth_user.user_id))
+        .all(&db)
+        .await?
+        .into_iter()
+        .map(|f| f.followee_id)
+        .collect();
+
+    if following_ids.is_empty() {
+        return Ok(Json(ListResponse {
+            articles: vec![],
+            articles_count: 0,
+        }));
+    }
+
+    let limit = params.limit.unwrap_or(20);
+    let offset = params.offset.unwrap_or(0);
+
+    let query = articles::Entity::find().filter(articles::Column::AuthorId.is_in(following_ids));
+
+    let total_count = query.clone().count(&db).await? as usize;
+
+    let articles_list = query
+        .order_by_desc(articles::Column::CreatedAt)
+        .limit(limit)
+        .offset(offset)
+        .all(&db)
+        .await?;
+
+    let mut articles_response = Vec::new();
+
+    for article in articles_list {
+        let author = users::Entity::find_by_id(article.author_id)
+            .one(&db)
+            .await?
+            .ok_or(AppError::NotFound)?;
+
+        let following = is_following(&db, auth_user.user_id, author.id).await?;
+
+        let favorited = favorites::Entity::find()
+            .filter(favorites::Column::UserId.eq(auth_user.user_id))
+            .filter(favorites::Column::ArticleId.eq(article.id))
+            .one(&db)
+            .await?
+            .is_some();
+
+        let favorites_count = favorites::Entity::find()
+            .filter(favorites::Column::ArticleId.eq(article.id))
+            .count(&db)
+            .await? as u32;
+
+        let tag_list = get_article_tags(&db, article.id).await?;
+
+        articles_response.push(ArticleListItemResponse {
+            slug: article.slug,
+            title: article.title,
+            description: article.description,
             tag_list,
             created_at: article.created_at,
             updated_at: article.updated_at,
@@ -379,7 +512,7 @@ pub async fn get_article(
         .filter(articles::Column::Slug.eq(decoded_slug))
         .one(&db)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or(AppError::ArticleNotFound)?;
 
     let author = users::Entity::find_by_id(article.author_id)
         .one(&db)
@@ -435,22 +568,33 @@ pub async fn delete_article(
     State(db): State<DatabaseConnection>,
     auth_user: AuthUser,
     Path(slug): Path<String>,
-) -> Result<Json<()>, AppError> {
+) -> Result<StatusCode, AppError> {
     let decoded_slug = decode_slug(&slug)?;
 
     let article = articles::Entity::find()
         .filter(articles::Column::Slug.eq(decoded_slug))
         .one(&db)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or(AppError::ArticleNotFound)?;
 
     if article.author_id != auth_user.user_id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::ArticleForbidden);
     }
+
+    // 先删除关联的标签
+    article_tags::Entity::delete_many()
+        .filter(article_tags::Column::ArticleId.eq(article.id))
+        .exec(&db)
+        .await?;
+
+    favorites::Entity::delete_many()
+        .filter(favorites::Column::ArticleId.eq(article.id))
+        .exec(&db)
+        .await?;
 
     articles::Entity::delete_by_id(article.id).exec(&db).await?;
 
-    Ok(Json(()))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn get_article_tags(

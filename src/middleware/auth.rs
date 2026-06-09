@@ -17,11 +17,11 @@ where
             .headers
             .get("Authorization")
             .and_then(|v| v.to_str().ok())
-            .ok_or(AppError::Unauthorized)?;
+            .ok_or(AppError::TokenMissing)?;
 
         let token = auth_header
             .strip_prefix("Token ")
-            .ok_or(AppError::Unauthorized)?;
+            .ok_or(AppError::TokenMissing)?;
 
         let claims = verify_token(token)?;
 

@@ -1,5 +1,40 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct UpdateUser {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(deserialize_with = "deserialize_nullable_field")]
+    pub bio: Option<Option<String>>,
+    #[serde(deserialize_with = "deserialize_nullable_field")]
+    pub image: Option<Option<String>>,
+}
+
+impl Default for UpdateUser {
+    fn default() -> Self {
+        Self {
+            email: None,
+            username: None,
+            password: None,
+            bio: None,
+            image: None,
+        }
+    }
+}
+
+fn deserialize_nullable_field<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<Option<String>>::deserialize(deserializer)?;
+    Ok(Some(opt.unwrap_or(None)))
+}
+
 #[derive(Deserialize)]
 pub struct SignupUser {
     pub username: String,
@@ -21,15 +56,6 @@ pub struct LoginUser {
 #[derive(Deserialize)]
 pub struct LoginRequest {
     pub user: LoginUser,
-}
-
-#[derive(Deserialize)]
-pub struct UpdateUser {
-    pub email: Option<String>,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub bio: Option<String>,
-    pub image: Option<String>,
 }
 
 #[derive(Deserialize)]
