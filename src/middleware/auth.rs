@@ -1,12 +1,11 @@
 use crate::{app_error::AppError, utils::jwt::verify_token};
 
-use axum::{async_trait, extract::FromRequestParts, http::request::Parts};
+use axum::{extract::FromRequestParts, http::request::Parts};
 
 pub struct AuthUser {
     pub user_id: u32,
 }
 
-#[async_trait]
 impl<S> FromRequestParts<S> for AuthUser
 where
     S: Send + Sync,
@@ -29,5 +28,20 @@ where
         Ok(AuthUser {
             user_id: claims.user_id,
         })
+    }
+}
+
+pub struct OptionalAuth(pub Option<AuthUser>);
+
+impl<S> FromRequestParts<S> for OptionalAuth
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        Ok(OptionalAuth(
+            AuthUser::from_request_parts(parts, state).await.ok(),
+        ))
     }
 }

@@ -28,8 +28,8 @@ pub async fn signup(
         email: Set(payload.user.email),
         username: Set(payload.user.username),
         password_hash: Set(password_hash),
-        create_at: Set(now.to_string()),
-        update_at: Set(now.to_string()),
+        created_at: Set(now.to_string()),
+        updated_at: Set(now.to_string()),
         ..Default::default()
     };
 
@@ -83,8 +83,8 @@ pub async fn login(
 }
 
 pub async fn get_user(
-    auth_user: AuthUser,
     State(db): State<DatabaseConnection>,
+    auth_user: AuthUser,
 ) -> Result<Json<GetResponse>, AppError> {
     let user = users::Entity::find_by_id(auth_user.user_id)
         .one(&db)
@@ -105,8 +105,8 @@ pub async fn get_user(
 }
 
 pub async fn update_user(
-    auth_user: AuthUser,
     State(db): State<DatabaseConnection>,
+    auth_user: AuthUser,
     Json(payload): Json<UpdateRequest>,
 ) -> Result<Json<UpdateResponse>, AppError> {
     let user = users::Entity::find_by_id(auth_user.user_id)
@@ -137,8 +137,8 @@ pub async fn update_user(
         active_user.image = Set(Some(image));
     }
 
-    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    active_user.update_at = Set(now);
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    active_user.updated_at = Set(now.to_string());
 
     let updated_user = active_user.update(&db).await?;
 

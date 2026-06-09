@@ -13,18 +13,16 @@ pub struct Model {
     pub password_hash: String,
     pub bio: Option<String>,
     pub image: Option<String>,
-    pub create_at: String,
-    pub update_at: String,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    // 一个用户有多篇文章
     #[sea_orm(has_many = "super::articles::Entity")]
     Articles,
 }
 
-// 实现 Related trait
 impl Related<super::articles::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Articles.def()

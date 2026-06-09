@@ -13,6 +13,14 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::models::{articles, follows, users};
 
+async fn log_request(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    println!("收到请求: {} {}", req.method(), req.uri());
+    next.run(req).await
+}
+
 async fn setup(db: &DatabaseConnection) {
     let schema = Schema::new(sea_orm::DbBackend::Sqlite);
 
@@ -44,7 +52,10 @@ async fn main() -> Result<(), DbErr> {
         .allow_headers(Any)
         .allow_methods(Any);
 
-    let app = routes().layer(cors).with_state(db);
+    let app = routes()
+        .layer(axum::middleware::from_fn(log_request))
+        .layer(cors)
+        .with_state(db);
 
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
 
